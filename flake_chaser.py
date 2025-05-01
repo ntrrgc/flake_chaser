@@ -74,7 +74,7 @@ async def gentle_terminate_and_wait(proc: Process):
     logging.debug(f"Process {proc.pid} reaped")
 
 async def follow_file_lines(file_path: Path) -> AsyncGenerator[bytes, None]:
-    proc = await asyncio.create_subprocess_exec("tail", "-f", str(file_path),
+    proc = await asyncio.create_subprocess_exec("tail", "-n", "+0", "-f", str(file_path),
             stdout=PIPE, stderr=DEVNULL, stdin=DEVNULL)
     try:
         assert proc.stdout is not None
