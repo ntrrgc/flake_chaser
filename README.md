@@ -10,8 +10,6 @@ Furthermore, `flake_chaser.py` can run many instances at the same time, which no
 
 At this point there is no command line interface. Instead, you have to edit `flake_chaser.py`.
 
-There is at least one bug with SIGINT handling where if you ^C the main process, one test subprocess remains alive.
-
 I haven't been as diligent with expection handling as I could.
 
 It's also the first time I use asyncio for subprocess handling, and I'm still relatively unfamiliar with Python's asyncio.

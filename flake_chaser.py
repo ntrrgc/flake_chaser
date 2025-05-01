@@ -149,7 +149,13 @@ async def main(config: Config):
         config.path_worker(worker_id).mkdir(mode=0o755)
         task = asyncio.create_task(worker_main(config, worker_id))
         tasks_by_worker_id[worker_id] = task
-    done, pending = await asyncio.wait(tasks_by_worker_id.values(), return_when=asyncio.FIRST_COMPLETED)
+    try:
+        done, pending = await asyncio.wait(tasks_by_worker_id.values(), return_when=asyncio.FIRST_COMPLETED)
+    except asyncio.CancelledError:
+        print(f"Terminating all tests subprocesses to ^C.")
+        for task in tasks_by_worker_id.values():
+            task.cancel()
+        return
     for task in done:
         task.result()  # consume result (None) or propagate exception
     # If an exception hasn't been raised already, we must have a run that reproduced the issue.
