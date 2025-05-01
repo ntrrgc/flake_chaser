@@ -122,21 +122,21 @@ async def do_single_run(config: Config, worker_id: int, test_run_id: int) -> Opt
         await gentle_terminate_and_wait(proc)
         raise err
 
+class FoundTestWithIssue(Exception):
+    pass
+
 async def worker_main(config: Config, worker_id: int):
     global COUNT_RUNS_DONE
-    try:
-        run_id = 0
-        while True:
-            run_id += 1
-            config.path_test(worker_id, run_id).mkdir(mode=0o755)
-            result = await do_single_run(config, worker_id, run_id)
-            COUNT_RUNS_DONE += 1
-            print(gen_status_text())
-            if result is not None:
-                return  # found the issue!
-            shutil.rmtree(config.path_test(worker_id, run_id))
-    except asyncio.CancelledError:
-        pass
+    run_id = 0
+    while True:
+        run_id += 1
+        config.path_test(worker_id, run_id).mkdir(mode=0o755)
+        result = await do_single_run(config, worker_id, run_id)
+        COUNT_RUNS_DONE += 1
+        print(gen_status_text())
+        if result is not None:
+            raise FoundTestWithIssue
+        shutil.rmtree(config.path_test(worker_id, run_id))
 
 async def main(config: Config):
     config.out_root.mkdir(mode=0o755, parents=True, exist_ok=True)
@@ -144,49 +144,42 @@ async def main(config: Config):
     for child in config.out_root.iterdir():
         if child.name.startswith("worker-"):  # avoid accidental rm -rf /
             shutil.rmtree(child)
-    tasks_by_worker_id: dict[int, asyncio.Task] = {}
-    for worker_id in range(1, config.parallel_runner_count + 1):
-        config.path_worker(worker_id).mkdir(mode=0o755)
-        task = asyncio.create_task(worker_main(config, worker_id))
-        tasks_by_worker_id[worker_id] = task
     try:
-        done, pending = await asyncio.wait(tasks_by_worker_id.values(), return_when=asyncio.FIRST_COMPLETED)
-    except asyncio.CancelledError:
-        print(f"Terminating all tests subprocesses to ^C.")
-        for task in tasks_by_worker_id.values():
-            task.cancel()
-        return
-    for task in done:
-        task.result()  # consume result (None) or propagate exception
-    # If an exception hasn't been raised already, we must have a run that reproduced the issue.
+        async with asyncio.TaskGroup() as task_group:
+            for worker_id in range(1, config.parallel_runner_count + 1):
+                config.path_worker(worker_id).mkdir(mode=0o755)
+                task_group.create_task(worker_main(config, worker_id))
+    except* FoundTestWithIssue:
+        pass
+    # If an unrelated exception hasn't been raised already, we must have a run
+    # that reproduced the issue.
     assert TEST_WITH_ISSUE is not None
-    for task in pending:
-        task.cancel()
     print(f"Worker {TEST_WITH_ISSUE.worker_id} reproduced an issue on run "
           f"{TEST_WITH_ISSUE.test_run_id}: {TEST_WITH_ISSUE.reason}\n"
           + str(config.path_test(TEST_WITH_ISSUE.worker_id, TEST_WITH_ISSUE.test_run_id)))
-    # Wait for tasks to finish
-    for task in tasks_by_worker_id.values():
-        await task
     if not config.kill_process_with_issue:
         print(f"Affected test process has PID {TEST_WITH_ISSUE.process.pid}.")
         print(f"You can attach a debugger to it or analyze its logs at this time.")
         try:
             await TEST_WITH_ISSUE.process.wait()
             print(f"Test subprocess exited.")
-        except asyncio.CancelledError:
+        except asyncio.CancelledError as err:
             print(f"Terminating test subprocess due to ^C.")
             await gentle_terminate_and_wait(TEST_WITH_ISSUE.process)
+            raise err
 
 
 if __name__ == "__main__":
     # logging.basicConfig(level=logging.DEBUG)
 
-    asyncio.run(main(Config(
-        parallel_runner_count=4,
-        out_root=Path("/tmp/flake-chaser-logs/"),
-        test_command=["./fake_flake.py"],
-        re_exit_found_issue=re.compile(rb"\bfailed\b"),
-        re_exit_found_no_issue=re.compile(rb"\bsucceeded\b"),
-        kill_process_with_issue=False,
-    )))
+    try:
+        asyncio.run(main(Config(
+            parallel_runner_count=4,
+            out_root=Path("/tmp/flake-chaser-logs/"),
+            test_command=["./fake_flake.py"],
+            re_exit_found_issue=re.compile(rb"\bfailed\b"),
+            re_exit_found_no_issue=re.compile(rb"\bsucceeded\b"),
+            kill_process_with_issue=False,
+        )))
+    except KeyboardInterrupt:
+        pass
