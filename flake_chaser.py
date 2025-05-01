@@ -16,6 +16,13 @@ type Outcome = Literal["found_issue", "found_no_issue"]
 @dataclass
 class Config:
     out_root: Path
+    """
+    Command that will be invoked to run the test. Can have any number of
+    arguments.
+    After all the arguments provided, an extra argument is appended containing
+    the directory reserved for this test run output.
+    These directories are automatically deleted on successive test runs.
+    """
     test_command: list[str]
     re_exit_found_issue: re.Pattern[bytes]
     re_exit_found_no_issue: re.Pattern[bytes]
